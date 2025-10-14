@@ -2,7 +2,7 @@
 """
 Reddit Comments May 2015 Dataset Loader
 
-This program automatically loads the Kaggle dataset "Reddit Comments May 2015" into PostgreSQL.
+This program automatically loads the Kaggle dataset "Reddit Comments May 2015" from SQLite into PostgreSQL.
 The program handles all steps including database connection, table creation, and data loading
 without manual intervention.
 
@@ -11,7 +11,7 @@ Dataset: https://www.kaggle.com/datasets/kaggle/reddit-comments-may-2015
 REQUIREMENTS:
 - PostgreSQL server running and accessible
 - psycopg2-binary package installed (pip install psycopg2-binary)
-- Input file: RC_2015-05.json or RC_2015-05.json.gz
+- Input file: database.sqlite
 
 CONFIGURATION:
 1. Ensure PostgreSQL is running on your system
@@ -19,16 +19,16 @@ CONFIGURATION:
 3. Note your PostgreSQL connection details (host, username, password, database name)
 
 USAGE:
-    # Full dataset load
-    python load_reddit_may2015.py --input RC_2015-05.json.gz --host localhost --user postgres --password mypass --dbname redditdb
+    # Full dataset load from SQLite
+    python load_reddit_may2015.py --input database.sqlite --host localhost --user postgres --password mypass --dbname redditdb
     
     # Test with sample data (first 1000 comments)
-    python load_reddit_may2015.py --input RC_2015-05.json.gz --host localhost --user postgres --password mypass --dbname redditdb --sample 1000
+    python load_reddit_may2015.py --input database.sqlite --host localhost --user postgres --password mypass --dbname redditdb --sample 1000
 
 AUTOMATIC STEPS:
 1. Connects to PostgreSQL database
 2. Creates 'comments' table with proper schema if it doesn't exist
-3. Streams the JSON file (handles both .json and .json.gz)
+3. Reads data from SQLite database
 4. Extracts required fields from each comment
 5. Loads data in batches of 1000 records for optimal performance
 6. Provides progress updates every 100,000 records
@@ -42,8 +42,7 @@ OUTPUT:
 """
 
 import argparse
-import gzip
-import json
+import sqlite3
 import sys
 
 try:
@@ -65,16 +64,16 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Load full dataset
-    python load_reddit_may2015.py --input RC_2015-05.json.gz --host localhost --user postgres --password mypass --dbname redditdb
+    # Load full dataset from SQLite
+    python load_reddit_may2015.py --input database.sqlite --host localhost --user postgres --password mypass --dbname redditdb
     
     # Test with sample data
-    python load_reddit_may2015.py --input RC_2015-05.json.gz --host localhost --user postgres --password mypass --dbname redditdb --sample 1000
+    python load_reddit_may2015.py --input database.sqlite --host localhost --user postgres --password mypass --dbname redditdb --sample 1000
         """
     )
     
     parser.add_argument('--input', required=True, 
-                       help='Path to Reddit comments file (RC_2015-05.json or RC_2015-05.json.gz)')
+                       help='Path to SQLite database file (database.sqlite)')
     parser.add_argument('--host', default='localhost', 
                        help='PostgreSQL server host (default: localhost)')
     parser.add_argument('--user', default='postgres', 
@@ -155,21 +154,77 @@ def create_comments_table(conn):
         sys.exit(1)
 
 
-def open_file_stream(file_path):
+def read_sqlite_data(sqlite_path, sample_size=None):
     """
-    Open file stream for JSON or compressed JSON files.
-    Automatically handles both .json and .json.gz file formats.
+    Read comment data from SQLite database and convert to the same format as JSON.
+    This function handles the conversion from SQLite to PostgreSQL format.
     
     Args:
-        file_path (str): Path to the input file
+        sqlite_path (str): Path to the SQLite database file
+        sample_size (int, optional): Limit to first N comments for testing
         
     Returns:
-        file object: Open file stream for reading
+        list: List of comment dictionaries in the same format as JSON data
     """
-    if file_path.endswith('.gz'):
-        return gzip.open(file_path, 'rt', encoding='utf-8')
-    else:
-        return open(file_path, 'r', encoding='utf-8')
+    comments = []
+    
+    try:
+        # Connect to SQLite database
+        conn = sqlite3.connect(sqlite_path)
+        cursor = conn.cursor()
+        
+        # Get table information to understand the schema
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = cursor.fetchall()
+        print(f"Found tables in SQLite database: {[table[0] for table in tables]}")
+        
+        # Try to find the comments table (common names)
+        table_name = None
+        for table in tables:
+            table_name_candidate = table[0].lower()
+            if 'comment' in table_name_candidate or 'reddit' in table_name_candidate:
+                table_name = table[0]
+                break
+        
+        if not table_name:
+            # If no obvious table name, use the first table
+            table_name = tables[0][0]
+        
+        print(f"Using table: {table_name}")
+        
+        # Get column information
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        columns = cursor.fetchall()
+        column_names = [col[1] for col in columns]
+        print(f"Available columns: {column_names}")
+        
+        # Build query with LIMIT if sample_size is specified
+        query = f"SELECT * FROM {table_name}"
+        if sample_size:
+            query += f" LIMIT {sample_size}"
+        
+        cursor.execute(query)
+        
+        # Fetch all rows and convert to dictionary format
+        rows = cursor.fetchall()
+        for row in rows:
+            comment_dict = {}
+            for i, value in enumerate(row):
+                if i < len(column_names):
+                    comment_dict[column_names[i]] = value
+            comments.append(comment_dict)
+        
+        conn.close()
+        print(f"Successfully read {len(comments)} comments from SQLite database")
+        
+    except sqlite3.Error as e:
+        print(f"Error reading SQLite database: {e}")
+        return []
+    except Exception as e:
+        print(f"Unexpected error reading SQLite database: {e}")
+        return []
+    
+    return comments
 
 
 def extract_comment_fields(comment_data):
@@ -233,16 +288,16 @@ def extract_comment_fields(comment_data):
 
 def load_comments(conn, file_path, sample_size=None):
     """
-    Load Reddit comments from JSON file into PostgreSQL database.
+    Load Reddit comments from SQLite file into PostgreSQL database.
     This function handles the complete loading process automatically:
-    - Streams the file line by line (memory efficient)
-    - Parses JSON and extracts required fields
+    - Reads data from SQLite database
+    - Extracts required fields from each comment
     - Loads data in batches for optimal performance
     - Provides progress updates and error handling
     
     Args:
         conn: PostgreSQL database connection object
-        file_path (str): Path to the input JSON file
+        file_path (str): Path to the SQLite database file
         sample_size (int, optional): Limit to first N comments for testing
     """
     batch_size = 1000
@@ -268,48 +323,31 @@ def load_comments(conn, file_path, sample_size=None):
     
     try:
         cursor = conn.cursor()
-        with open_file_stream(file_path) as file_stream:
-            for line_num, line in enumerate(file_stream, 1):
-                # Check sample size limit
-                if sample_size and total_processed >= sample_size:
-                    break
+        
+        print("Reading data from SQLite database")
+        # Read all data from SQLite
+        comments_data = read_sqlite_data(file_path, sample_size)
+        
+        for comment_data in comments_data:
+            # Extract required fields
+            comment_tuple = extract_comment_fields(comment_data)
+            if comment_tuple is not None:
+                batch_data.append(comment_tuple)
+                total_inserted += 1
+            else:
+                total_errors += 1
+            
+            total_processed += 1
+            
+            # Insert batch when it reaches batch_size
+            if len(batch_data) >= batch_size:
+                cursor.executemany(insert_sql, batch_data)
+                conn.commit()
+                batch_data = []
                 
-                line = line.strip()
-                if not line:
-                    continue
-                
-                try:
-                    # Parse JSON line
-                    comment_data = json.loads(line)
-                    
-                    # Extract required fields
-                    comment_tuple = extract_comment_fields(comment_data)
-                    if comment_tuple is not None:
-                        batch_data.append(comment_tuple)
-                        total_inserted += 1
-                    else:
-                        total_errors += 1
-                    
-                    total_processed += 1
-                    
-                    # Insert batch when it reaches batch_size
-                    if len(batch_data) >= batch_size:
-                        cursor.executemany(insert_sql, batch_data)
-                        conn.commit()
-                        batch_data = []
-                        
-                        # Progress every 100,000 rows
-                        if total_processed % 100000 == 0:
-                            print(f"Progress: {total_processed:,} processed, {total_inserted:,} inserted, {total_errors:,} errors")
-                
-                except json.JSONDecodeError as e:
-                    total_errors += 1
-                    print(f"Warning: Malformed JSON at line {line_num}: {e}")
-                    continue
-                except Exception as e:
-                    total_errors += 1
-                    print(f"Warning: Unexpected error at line {line_num}: {e}")
-                    continue
+                # Progress every 100,000 rows
+                if total_processed % 100000 == 0:
+                    print(f"Progress: {total_processed:,} processed, {total_inserted:,} inserted, {total_errors:,} errors")
         
         # Insert remaining batch
         if batch_data:
