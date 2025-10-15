@@ -44,6 +44,12 @@ OUTPUT:
 import argparse
 import sqlite3
 import sys
+import subprocess
+import os
+import json
+import zipfile
+import requests
+from tqdm import tqdm
 
 try:
     import psycopg2 # type: ignore
@@ -87,6 +93,85 @@ Examples:
     
     return parser.parse_args()
 
+def download_kaggle_dataset(dataset_name, kaggle_json_file=None, output_dir="."):
+    """
+    Direct Kaggle dataset download with progress bar (manual 31.81 GB total).
+    Works on Python 3.13 without using kaggle CLI.
+    """
+    try:
+        print(f"\nStep: Setting up Kaggle API for dataset '{dataset_name}'")
+
+        # --- Setup credentials ---
+        creds_path = os.path.expanduser("~/.kaggle/kaggle.json")
+        if kaggle_json_file:
+            os.makedirs(os.path.dirname(creds_path), exist_ok=True)
+            os.replace(kaggle_json_file, creds_path)
+            os.chmod(creds_path, 0o600)
+            print(" Kaggle credentials configured")
+
+        if not os.path.exists(creds_path):
+            print("❌ Missing kaggle.json file. Please provide path or place it in ~/.kaggle/")
+            return None
+
+        # Load username and key
+        with open(creds_path, "r") as f:
+            creds = json.load(f)
+        username, key = creds["username"], creds["key"]
+
+        # --- Prepare download ---
+        dataset_url = f"https://www.kaggle.com/api/v1/datasets/download/{dataset_name}"
+        os.makedirs(output_dir, exist_ok=True)
+        zip_path = os.path.join(output_dir, "dataset.zip")
+        headers = {"User-Agent": "kaggle/1.5.0 (Python requests)"}
+        auth = (username, key)
+
+        print(f"Dataset URL: {dataset_url}")
+        print("\nStarting download...\n")
+
+        # --- Manual total (in bytes) ---
+        known_total = int(20 * 1024**3)
+
+        # --- Stream download with tqdm ---
+        block = 1024 * 1024  # 1 MB chunks
+        r = requests.get(dataset_url, stream=True, auth=auth, headers=headers)
+        r.raise_for_status()
+
+        with open(zip_path, "wb") as f, tqdm(
+            total=known_total,
+            unit="B",
+            unit_scale=True,
+            unit_divisor=1024,
+            desc="Downloading (20GB zip)",
+            ncols=80,
+            ascii=True,
+            colour="cyan",
+            bar_format="{desc}: {percentage:3.0f}%|{bar:25}| "
+                    "{n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+        ) as bar:
+            bytes_downloaded = 0
+            for chunk in r.iter_content(chunk_size=block):
+                if chunk:
+                    f.write(chunk)
+                    bytes_downloaded += len(chunk)
+                    bar.update(len(chunk))
+
+        r.close()
+        print(f"\n✅ Download complete: {bytes_downloaded / 1024**3:.2f} GB written")
+
+        # --- Extraction ---
+        if zipfile.is_zipfile(zip_path):
+            print("Extracting dataset...")
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                zf.extractall(output_dir)
+            print(f"✅ Dataset extracted to {output_dir}")
+        else:
+            print("⚠️ File is not a zip, skipping extraction.")
+
+        return output_dir
+
+    except Exception as e:
+        print(f"❌ Download failed: {e}")
+        return None
 
 def create_database_connection(host, user, password, dbname):
     """
@@ -387,6 +472,31 @@ def main():
     print("Reddit Comments May 2015 Dataset Loader")
     print("=" * 60)
     
+    if not os.path.exists(args.input):
+        print(f"\n Step 0: '{args.input}' not found locally.")
+        print("Attempting to download from Kaggle...")
+
+        # Example: Kaggle dataset name for Reddit May 2015
+        dataset_slug = "kaggle/reddit-comments-may-2015"
+
+        # Optional: replace with your actual kaggle.json path if needed
+        kaggle_json_path = os.path.expanduser("~/.kaggle/kaggle.json")
+
+        dataset_dir = download_kaggle_dataset(dataset_slug, kaggle_json_file=kaggle_json_path, output_dir=".")
+        if dataset_dir:
+            print(f" Dataset downloaded to: {dataset_dir}")
+        else:
+            print(" Failed to download dataset. Exiting.")
+            sys.exit(1)
+
+        # Try to locate the SQLite file in the extracted folder
+        possible_files = [f for f in os.listdir(dataset_dir) if f.endswith(".sqlite")]
+        if not possible_files:
+            print(" No SQLite file found in downloaded dataset.")
+            sys.exit(1)
+        args.input = os.path.join(dataset_dir, possible_files[0])
+        print(f"Using downloaded SQLite file: {args.input}")
+
     # Step 1: Connect to database
     print("\n Step 1: Connecting to PostgreSQL database...")
     conn = create_database_connection(args.host, args.user, args.password, args.dbname)
