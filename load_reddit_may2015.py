@@ -15,25 +15,27 @@ REQUIREMENTS:
 
 CONFIGURATION:
 1. Ensure PostgreSQL is running on your system
-2. Create a database for the Reddit data (e.g., 'redditdb')
-3. Note your PostgreSQL connection details (host, username, password, database name)
+2. Note your PostgreSQL connection details (host, username, password)
+3. The program will automatically create the database if it doesn't exist
 
 USAGE:
     # Full dataset load from SQLite
-    python load_reddit_may2015.py --input database.sqlite --host localhost --user postgres --password mypass --dbname redditdb
+    python load_reddit_may2015.py --input database.sqlite --host localhost --port 5432 --user postgres --password mypass --dbname redditdb
     
     # Test with sample data (first 1000 comments)
-    python load_reddit_may2015.py --input database.sqlite --host localhost --user postgres --password mypass --dbname redditdb --sample 1000
+    python load_reddit_may2015.py --input database.sqlite --host localhost --port 5432 --user postgres --password mypass --dbname redditdb --sample 1000
 
 AUTOMATIC STEPS:
-1. Connects to PostgreSQL database
-2. Creates 'comments' table with proper schema if it doesn't exist
-3. Reads data from SQLite database
-4. Extracts required fields from each comment
-5. Loads data in batches of 1000 records for optimal performance
-6. Provides progress updates every 100,000 records
-7. Handles errors gracefully and continues processing
-8. Reports final statistics
+1. Connects to PostgreSQL server (using 'postgres' database)
+2. Creates target database if it doesn't exist
+3. Connects to the target database
+4. Creates 'comments' table with proper schema if it doesn't exist
+5. Reads data from SQLite database
+6. Extracts required fields from each comment
+7. Loads data in batches of 1000 records for optimal performance
+8. Provides progress updates every 100,000 records
+9. Handles errors gracefully and continues processing
+10. Reports final statistics
 
 OUTPUT:
 - Progress messages during loading
@@ -71,10 +73,10 @@ def parse_arguments():
         epilog="""
 Examples:
     # Load full dataset from SQLite
-    python load_reddit_may2015.py --input database.sqlite --host localhost --user postgres --password mypass --dbname redditdb
+    python load_reddit_may2015.py --input database.sqlite --host localhost --port 5432 --user postgres --password mypass --dbname redditdb
     
     # Test with sample data
-    python load_reddit_may2015.py --input database.sqlite --host localhost --user postgres --password mypass --dbname redditdb --sample 1000
+    python load_reddit_may2015.py --input database.sqlite --host localhost --port 5432 --user postgres --password mypass --dbname redditdb --sample 1000
         """
     )
     
@@ -82,6 +84,8 @@ Examples:
                        help='Path to SQLite database file (database.sqlite)')
     parser.add_argument('--host', default='localhost', 
                        help='PostgreSQL server host (default: localhost)')
+    parser.add_argument('--port', default='5432', 
+                       help='PostgreSQL server port (default: 5432)')
     parser.add_argument('--user', default='postgres', 
                        help='PostgreSQL username (default: postgres)')
     parser.add_argument('--password', required=True, 
@@ -173,12 +177,55 @@ def download_kaggle_dataset(dataset_name, kaggle_json_file=None, output_dir=".")
         print(f"❌ Download failed: {e}")
         return None
 
-def create_database_connection(host, user, password, dbname):
+def create_database_if_not_exists(host, port, user, password, dbname):
+    """
+    Create the target database if it doesn't exist.
+    This function connects to the 'postgres' database first, then creates the target database.
+    
+    Args:
+        host (str): PostgreSQL server host
+        port (str): PostgreSQL server port
+        user (str): PostgreSQL username
+        password (str): PostgreSQL password
+        dbname (str): Target database name to create
+        
+    Returns:
+        bool: True if database exists or was created successfully, False otherwise
+    """
+    try:
+        # First connect to the default 'postgres' database
+        conn = psycopg2.connect(host=host, port=port, user=user, password=password, dbname='postgres')
+        conn.autocommit = True  # Required for CREATE DATABASE
+        cursor = conn.cursor()
+        
+        # Check if database exists
+        cursor.execute("SELECT 1 FROM pg_database WHERE datname = %s", (dbname,))
+        exists = cursor.fetchone()
+        
+        if not exists:
+            # Create the database
+            cursor.execute(f'CREATE DATABASE "{dbname}"')
+            print(f"✓ Database '{dbname}' created successfully")
+        else:
+            print(f"✓ Database '{dbname}' already exists")
+        
+        cursor.close()
+        conn.close()
+        return True
+        
+    except psycopg2.Error as e:
+        print(f"✗ Error creating database '{dbname}': {e}")
+        print("Please check your PostgreSQL server is running and you have CREATE DATABASE permissions.")
+        return False
+
+
+def create_database_connection(host, port, user, password, dbname):
     """
     Create and return a PostgreSQL database connection.
     
     Args:
         host (str): PostgreSQL server host
+        port (str): PostgreSQL server port
         user (str): PostgreSQL username
         password (str): PostgreSQL password
         dbname (str): PostgreSQL database name
@@ -190,8 +237,8 @@ def create_database_connection(host, user, password, dbname):
         System exit if connection fails
     """
     try:
-        conn = psycopg2.connect(host=host, user=user, password=password, dbname=dbname)
-        print(f"Connected to database '{dbname}' on {host}")
+        conn = psycopg2.connect(host=host, port=port, user=user, password=password, dbname=dbname)
+        print(f"Connected to database '{dbname}' on {host}:{port}")
         return conn
     except psycopg2.Error as e:
         print(f"Database connection failed: {e}")
@@ -461,10 +508,11 @@ def main():
     Main function that orchestrates the complete data loading process.
     This function handles all steps automatically without manual intervention:
     1. Parse command line arguments
-    2. Connect to PostgreSQL database
-    3. Create/verify comments table
-    4. Load data from JSON file
-    5. Report final statistics
+    2. Create target database if it doesn't exist
+    3. Connect to PostgreSQL database
+    4. Create/verify comments table
+    5. Load data from SQLite file
+    6. Report final statistics
     """
     args = parse_arguments()
     
@@ -500,14 +548,23 @@ def main():
     # Step 1: Connect to database
     print("\n Step 1: Connecting to PostgreSQL database...")
     conn = create_database_connection(args.host, args.user, args.password, args.dbname)
+    # Step 1: Create database if it doesn't exist
+    print("\n Step 1: Creating database if it doesn't exist...")
+    if not create_database_if_not_exists(args.host, args.port, args.user, args.password, args.dbname):
+        print("Failed to create or verify database. Exiting.")
+        sys.exit(1)
+    
+    # Step 2: Connect to database
+    print("\n Step 2: Connecting to PostgreSQL database...")
+    conn = create_database_connection(args.host, args.port, args.user, args.password, args.dbname)
     
     try:
-        # Step 2: Create/verify table
-        print("\n Step 2: Creating/verifying comments table...")
+        # Step 3: Create/verify table
+        print("\n Step 3: Creating/verifying comments table...")
         create_comments_table(conn)
         
-        # Step 3: Load data
-        print("\n Step 3: Loading data from file...")
+        # Step 4: Load data
+        print("\n Step 4: Loading data from file...")
         load_comments(conn, args.input, args.sample)
         
         print("\n All steps completed successfully!")
