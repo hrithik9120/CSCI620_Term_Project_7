@@ -20,10 +20,10 @@ CONFIGURATION:
 
 USAGE:
     # Full dataset load from SQLite
-    python load_reddit_may2015.py --input database.sqlite --host localhost --user postgres --password mypass --dbname redditdb
+    python load_reddit_may2015.py --input database.sqlite --host localhost --port 5432 --user postgres --password mypass --dbname redditdb
     
     # Test with sample data (first 1000 comments)
-    python load_reddit_may2015.py --input database.sqlite --host localhost --user postgres --password mypass --dbname redditdb --sample 1000
+    python load_reddit_may2015.py --input database.sqlite --host localhost --port 5432 --user postgres --password mypass --dbname redditdb --sample 1000
 
 AUTOMATIC STEPS:
 1. Connects to PostgreSQL database
@@ -65,10 +65,10 @@ def parse_arguments():
         epilog="""
 Examples:
     # Load full dataset from SQLite
-    python load_reddit_may2015.py --input database.sqlite --host localhost --user postgres --password mypass --dbname redditdb
+    python load_reddit_may2015.py --input database.sqlite --host localhost --port 5432 --user postgres --password mypass --dbname redditdb
     
     # Test with sample data
-    python load_reddit_may2015.py --input database.sqlite --host localhost --user postgres --password mypass --dbname redditdb --sample 1000
+    python load_reddit_may2015.py --input database.sqlite --host localhost --port 5432 --user postgres --password mypass --dbname redditdb --sample 1000
         """
     )
     
@@ -76,6 +76,8 @@ Examples:
                        help='Path to SQLite database file (database.sqlite)')
     parser.add_argument('--host', default='localhost', 
                        help='PostgreSQL server host (default: localhost)')
+    parser.add_argument('--port', default='5432', 
+                       help='PostgreSQL server port (default: 5432)')
     parser.add_argument('--user', default='postgres', 
                        help='PostgreSQL username (default: postgres)')
     parser.add_argument('--password', required=True, 
@@ -88,12 +90,13 @@ Examples:
     return parser.parse_args()
 
 
-def create_database_connection(host, user, password, dbname):
+def create_database_connection(host, port, user, password, dbname):
     """
     Create and return a PostgreSQL database connection.
     
     Args:
         host (str): PostgreSQL server host
+        port (str): PostgreSQL server port
         user (str): PostgreSQL username
         password (str): PostgreSQL password
         dbname (str): PostgreSQL database name
@@ -105,8 +108,8 @@ def create_database_connection(host, user, password, dbname):
         System exit if connection fails
     """
     try:
-        conn = psycopg2.connect(host=host, user=user, password=password, dbname=dbname)
-        print(f"Connected to database '{dbname}' on {host}")
+        conn = psycopg2.connect(host=host, port=port, user=user, password=password, dbname=dbname)
+        print(f"Connected to database '{dbname}' on {host}:{port}")
         return conn
     except psycopg2.Error as e:
         print(f"Database connection failed: {e}")
@@ -389,7 +392,7 @@ def main():
     
     # Step 1: Connect to database
     print("\n Step 1: Connecting to PostgreSQL database...")
-    conn = create_database_connection(args.host, args.user, args.password, args.dbname)
+    conn = create_database_connection(args.host, args.port, args.user, args.password, args.dbname)
     
     try:
         # Step 2: Create/verify table
