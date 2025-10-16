@@ -106,18 +106,11 @@ def download_kaggle_dataset(dataset_name, kaggle_json_file=None, output_dir=".")
         print(f"\nStep: Setting up Kaggle API for dataset '{dataset_name}'")
 
         # --- Setup credentials ---
-        creds_path = os.path.expanduser("~/.kaggle/kaggle.json")
-        if kaggle_json_file:
-            os.makedirs(os.path.dirname(creds_path), exist_ok=True)
-            os.replace(kaggle_json_file, creds_path)
-            os.chmod(creds_path, 0o600)
-            print(" Kaggle credentials configured")
-
+        creds_path = "./kaggle.json"
         if not os.path.exists(creds_path):
-            print("❌ Missing kaggle.json file. Please provide path or place it in ~/.kaggle/")
+            print("❌ Missing kaggle.json in project folder.")
             return None
 
-        # Load username and key
         with open(creds_path, "r") as f:
             creds = json.load(f)
         username, key = creds["username"], creds["key"]
@@ -246,46 +239,6 @@ def create_database_connection(host, port, user, password, dbname):
         sys.exit(1)
 
 
-def create_comments_table(conn):
-    """
-    Create the comments table with the required schema.
-    This function automatically creates the table if it doesn't exist.
-    
-    Args:
-        conn: PostgreSQL database connection object
-        
-    Exits:
-        System exit if table creation fails
-    """
-    sql = """
-    CREATE TABLE IF NOT EXISTS comments (
-        id TEXT PRIMARY KEY,
-        link_id TEXT,
-        parent_id TEXT,
-        subreddit TEXT,
-        subreddit_id TEXT,
-        author TEXT,
-        body TEXT,
-        created_utc INTEGER,
-        score INTEGER,
-        gilded INTEGER,
-        controversiality INTEGER,
-        edited BOOLEAN,
-        distinguished TEXT
-    );
-    """
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute(sql)
-        conn.commit()
-        print("Comments table created/verified successfully")
-    except psycopg2.Error as e:
-        print(f"Table creation failed: {e}")
-        print("Please check your database permissions and try again.")
-        sys.exit(1)
-
-
 def read_sqlite_data(sqlite_path, sample_size=None):
     """
     Read comment data from SQLite database and convert to the same format as JSON.
@@ -358,149 +311,277 @@ def read_sqlite_data(sqlite_path, sample_size=None):
     
     return comments
 
-
-def extract_comment_fields(comment_data):
+def validate_and_convert_record(record):
     """
-    Extract and validate required fields from a Reddit comment JSON object.
-    Handles type conversion and missing fields gracefully.
-    
-    Args:
-        comment_data (dict): JSON object containing comment data
-        
-    Returns:
-        tuple: Extracted comment fields in database order, or None if extraction fails
+    Validate and convert data types for a comment record.
+    Returns cleaned record or None if validation fails.
     """
     try:
-        # Extract fields with proper type conversion
-        comment_id = comment_data.get('id', '')
-        link_id = comment_data.get('link_id', '')
-        parent_id = comment_data.get('parent_id', '')
-        subreddit = comment_data.get('subreddit', '')
-        subreddit_id = comment_data.get('subreddit_id', '')
-        author = comment_data.get('author', '')
-        body = comment_data.get('body', '')
+        cleaned_record = {}
         
-        # Convert numeric fields
-        created_utc = comment_data.get('created_utc')
-        if created_utc is not None:
-            created_utc = int(created_utc)
+        # String fields (direct copy)
+        for field in ['id', 'link_id', 'parent_id', 'subreddit', 'subreddit_id', 'author', 'body', 'distinguished']:
+            cleaned_record[field] = record.get(field, '')
         
-        score = comment_data.get('score')
-        if score is not None:
-            score = int(score)
+        # Numeric fields with conversion
+        for field in ['created_utc', 'score', 'gilded', 'controversiality', 'retrieved_on', 'ups', 'downs']:
+            value = record.get(field)
+            cleaned_record[field] = int(value) if value is not None else None
         
-        gilded = comment_data.get('gilded')
-        if gilded is not None:
-            gilded = int(gilded)
-        
-        controversiality = comment_data.get('controversiality')
-        if controversiality is not None:
-            controversiality = int(controversiality)
+        # Boolean fields
+        archived = record.get('archived')
+        cleaned_record['archived'] = int(archived) if archived is not None else 0
         
         # Handle edited field (can be boolean or string)
-        edited = comment_data.get('edited')
+        edited = record.get('edited')
         if isinstance(edited, bool):
-            edited = edited
+            cleaned_record['edited'] = int(edited)
         elif isinstance(edited, str):
-            edited = edited.lower() in ('true', '1', 'yes')
+            cleaned_record['edited'] = 1 if edited.lower() in ('true', '1', 'yes') else 0
         else:
-            edited = False
+            cleaned_record['edited'] = 0
         
-        distinguished = comment_data.get('distinguished', '')
+        # Handle score_hidden (if present)
+        cleaned_record['score_hidden'] = record.get('score_hidden', False)
         
-        return (
-            comment_id, link_id, parent_id, subreddit, subreddit_id,
-            author, body, created_utc, score, gilded, controversiality,
-            edited, distinguished
-        )
+        return cleaned_record
+        
     except (ValueError, TypeError) as e:
-        print(f"Warning: Error extracting fields from comment: {e}")
+        print(f"Warning: Error validating record: {e}")
         return None
 
-
-def load_comments(conn, file_path, sample_size=None):
+def execute_schema(conn, schema_file="./relational_schema/create_ddl_queries.sql"):
     """
-    Load Reddit comments from SQLite file into PostgreSQL database.
-    This function handles the complete loading process automatically:
-    - Reads data from SQLite database
-    - Extracts required fields from each comment
-    - Loads data in batches for optimal performance
-    - Provides progress updates and error handling
+    Load and execute SQL schema file to create all tables.
+    """
+    print(f"\nStep: Executing schema file '{schema_file}'...")
+    try:
+        with open(schema_file, "r") as f:
+            sql_script = f.read()
+        cursor = conn.cursor()
+        cursor.execute(sql_script)
+        conn.commit()
+        print("✓ Schema executed successfully.")
+    except Exception as e:
+        conn.rollback()
+        print(f"✗ Schema execution failed: {e}")
+        sys.exit(1)
+
+SCHEMA_COLUMNS = {
+    'user': ['author', 'author_flair_text', 'author_flair_css_class'],
+    'subreddit': ['subreddit_id', 'subreddit'],
+    'post': ['post_id', 'subreddit_id', 'author', 'created_utc', 'archived', 'gilded', 'edited'],
+    'post_link': ['link_id', 'post_id', 'retrieved_on'],
+    'comment': ['id', 'body', 'author', 'link_id', 'parent_id', 'created_utc', 'retrieved_on',
+                'score', 'ups', 'downs', 'score_hidden', 'gilded', 'controversiality', 'edited'],
+    'moderation': ['mod_action_id', 'target_type', 'target_id', 'subreddit_id',
+                   'removal_reason', 'distinguished', 'action_timestamp']
+}
+
+
+def separate_and_load_data(conn, comments_data):
+    """
+    Separate Reddit data into normalized tables (User, Subreddit, Post, Post_Link, Comment, Moderation)
+    and load each table into PostgreSQL.
+    Tracks progress, skipped rows, and FK violations.
     
     Args:
-        conn: PostgreSQL database connection object
-        file_path (str): Path to the SQLite database file
-        sample_size (int, optional): Limit to first N comments for testing
+        conn: psycopg2 database connection
+        comments_data (list[dict]): Extracted data from SQLite (raw)
     """
-    batch_size = 1000
-    batch_data = []
-    total_processed = 0
-    total_inserted = 0
-    total_errors = 0
-    
-    # Prepare statement for batch inserts
-    insert_sql = """
-    INSERT INTO comments (
-        id, link_id, parent_id, subreddit, subreddit_id, author, body,
-        created_utc, score, gilded, controversiality, edited, distinguished
-    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-    ON CONFLICT (id) DO NOTHING
-    """
-    
-    print(f"Loading comments from: {file_path}")
-    if sample_size:
-        print(f"Sample mode: Loading only {sample_size:,} comments for testing")
-    else:
-        print("Full dataset mode: Loading all comments")
-    
+    cursor = conn.cursor()
+    total_stats = {}
+
+    # Helper to track and print progress
+    def print_progress(table, processed, inserted, skipped):
+        print(f"  [{table}] Processed: {processed:,} | Inserted: {inserted:,} | Skipped (FK): {skipped:,}")
+
+    # =========================
+    # 1️⃣ LOAD USERS
+    # =========================
+    print("\nStep 1: Loading USERS...")
+    user_rows, processed, inserted, skipped = set(), 0, 0, 0
+    for record in comments_data:
+        processed += 1
+        author = record.get('author')
+        if not author or author == '[deleted]':
+            skipped += 1
+            continue
+        key = (author, record.get('author_flair_text'), record.get('author_flair_css_class'))
+        if key not in user_rows:
+            user_rows.add(key)
     try:
-        cursor = conn.cursor()
+        cursor.executemany("""
+            INSERT INTO User (author, author_flair_text, author_flair_css_class)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (author) DO NOTHING
+        """, list(user_rows))
+        inserted = cursor.rowcount
+        conn.commit()
+    except psycopg2.Error:
+        conn.rollback()
+    print_progress("User", processed, inserted, skipped)
+    total_stats["User"] = (processed, inserted, skipped)
+
+    # =========================
+    # 2️⃣ LOAD SUBREDDITS
+    # =========================
+    print("\nStep 2: Loading SUBREDDITS...")
+    sub_rows, processed, inserted, skipped = set(), 0, 0, 0
+    for record in comments_data:
+        processed += 1
+        sub_id, sub_name = record.get('subreddit_id'), record.get('subreddit')
+        if not sub_id or not sub_name:
+            skipped += 1
+            continue
+        key = (sub_id, sub_name)
+        sub_rows.add(key)
+    try:
+        cursor.executemany("""
+            INSERT INTO Subreddit (subreddit_id, subreddit)
+            VALUES (%s, %s)
+            ON CONFLICT (subreddit_id) DO NOTHING
+        """, list(sub_rows))
+        inserted = cursor.rowcount
+        conn.commit()
+    except psycopg2.Error:
+        conn.rollback()
+    print_progress("Subreddit", processed, inserted, skipped)
+    total_stats["Subreddit"] = (processed, inserted, skipped)
+
+    # =========================
+    # 3️⃣ LOAD POSTS
+    # =========================
+    print("\nStep 3: Loading POSTS...")
+    post_rows, processed, inserted, skipped = set(), 0, 0, 0
+    for record in comments_data:
+        processed += 1
+        post_id = record.get('link_id')
+        if not post_id:
+            skipped += 1
+            continue
+        subreddit_id = record.get('subreddit_id')
+        author = record.get('author')
+        created_utc = record.get('created_utc')
+        archived = record.get('archived', 0)
+        gilded = record.get('gilded', 0)
+        edited = int(bool(record.get('edited')))
+        key = (post_id, subreddit_id, author, created_utc, archived, gilded, edited)
+        post_rows.add(key)
+    try:
+        cursor.executemany("""
+            INSERT INTO Post (post_id, subreddit_id, author, created_utc, archived, gilded, edited)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (post_id) DO NOTHING
+        """, list(post_rows))
+        inserted = cursor.rowcount
+        conn.commit()
+    except psycopg2.Error as e:
+        print(f"Post load error: {e}")
+        conn.rollback()
+    print_progress("Post", processed, inserted, skipped)
+    total_stats["Post"] = (processed, inserted, skipped)
+
+    # =========================
+    # 4️⃣ LOAD POST_LINK
+    # =========================
+    print("\nStep 4: Loading POST_LINK...")
+    pl_rows, processed, inserted, skipped = set(), 0, 0, 0
+    for record in comments_data:
+        processed += 1
+        link_id, post_id, retrieved_on = record.get('link_id'), record.get('link_id'), record.get('retrieved_on')
+        if not link_id or not post_id:
+            skipped += 1
+            continue
+        pl_rows.add((link_id, post_id, retrieved_on))
+    try:
+        cursor.executemany("""
+            INSERT INTO Post_Link (link_id, post_id, retrieved_on)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (link_id) DO NOTHING
+        """, list(pl_rows))
+        inserted = cursor.rowcount
+        conn.commit()
+    except psycopg2.Error:
+        conn.rollback()
+    print_progress("Post_Link", processed, inserted, skipped)
+    total_stats["Post_Link"] = (processed, inserted, skipped)
+
+    # =========================
+    # 5️⃣ LOAD COMMENTS
+    # =========================
+    print("\nStep 5: Loading COMMENTS...")
+    processed, inserted, skipped = 0, 0, 0
+    for record in comments_data:
+        processed += 1
         
-        print("Reading data from SQLite database")
-        # Read all data from SQLite
-        comments_data = read_sqlite_data(file_path, sample_size)
+        # Validate and convert record data types
+        validated_record = validate_and_convert_record(record)
+        if validated_record is None:
+            skipped += 1
+            continue
         
-        for comment_data in comments_data:
-            # Extract required fields
-            comment_tuple = extract_comment_fields(comment_data)
-            if comment_tuple is not None:
-                batch_data.append(comment_tuple)
-                total_inserted += 1
-            else:
-                total_errors += 1
-            
-            total_processed += 1
-            
-            # Insert batch when it reaches batch_size
-            if len(batch_data) >= batch_size:
-                cursor.executemany(insert_sql, batch_data)
-                conn.commit()
-                batch_data = []
-                
-                # Progress every 100,000 rows
-                if total_processed % 100000 == 0:
-                    print(f"Progress: {total_processed:,} processed, {total_inserted:,} inserted, {total_errors:,} errors")
-        
-        # Insert remaining batch
-        if batch_data:
-            cursor.executemany(insert_sql, batch_data)
-            conn.commit()
-    
-    except FileNotFoundError:
-        print(f"Error: Input file not found: {file_path}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"Error reading file: {e}")
-        sys.exit(1)
-    
-    print(f"Loading completed successfully!")
-    print(f"Final Statistics:")
-    print(f"   • Total processed: {total_processed:,}")
-    print(f"   • Successfully inserted: {total_inserted:,}")
-    print(f"   • Errors encountered: {total_errors:,}")
-    if total_processed > 0:
-        success_rate = (total_inserted / total_processed) * 100
-        print(f"   • Success rate: {success_rate:.1f}%")
+        try:
+            cursor.execute("""
+                INSERT INTO Comment (
+                    id, body, author, link_id, parent_id,
+                    created_utc, retrieved_on, score, ups, downs,
+                    score_hidden, gilded, controversiality, edited
+                )
+                VALUES (%(id)s, %(body)s, %(author)s, %(link_id)s, %(parent_id)s,
+                        %(created_utc)s, %(retrieved_on)s, %(score)s, %(ups)s, %(downs)s,
+                        %(score_hidden)s, %(gilded)s, %(controversiality)s, %(edited)s)
+                ON CONFLICT (id) DO NOTHING
+            """, validated_record)
+            inserted += 1
+        except psycopg2.Error as e:
+            skipped += 1
+            conn.rollback()
+            if "foreign key" in str(e):
+                continue
+    conn.commit()
+    print_progress("Comment", processed, inserted, skipped)
+    total_stats["Comment"] = (processed, inserted, skipped)
+
+    # =========================
+    # 6️⃣ LOAD MODERATION (derived)
+    # =========================
+    print("\nStep 6: Loading MODERATION...")
+    mod_rows, processed, inserted = set(), 0, 0
+    for record in comments_data:
+        processed += 1
+        # Only include if removal_reason or distinguished present
+        if record.get('distinguished') or record.get('removal_reason'):
+            key = (
+                'comment',  # since data is from comments table
+                record.get('id'),
+                record.get('subreddit_id'),
+                record.get('removal_reason'),
+                record.get('distinguished'),
+                record.get('created_utc'),
+            )
+            mod_rows.add(key)
+    try:
+        cursor.executemany("""
+            INSERT INTO Moderation (target_type, target_id, subreddit_id, removal_reason, distinguished, action_timestamp)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, list(mod_rows))
+        inserted = cursor.rowcount
+        conn.commit()
+    except psycopg2.Error:
+        conn.rollback()
+    print_progress("Moderation", processed, inserted, processed - inserted)
+    total_stats["Moderation"] = (processed, inserted, processed - inserted)
+
+    # =========================
+    # FINAL SUMMARY
+    # =========================
+    print("\n===========================")
+    print(" LOAD SUMMARY")
+    print("===========================")
+    for table, (proc, ins, skip) in total_stats.items():
+        print(f"  {table:<12} | Processed: {proc:,} | Inserted: {ins:,} | Skipped: {skip:,}")
+    print("===========================")
 
 
 def main():
@@ -528,26 +609,21 @@ def main():
         dataset_slug = "kaggle/reddit-comments-may-2015"
 
         # Optional: replace with your actual kaggle.json path if needed
-        kaggle_json_path = os.path.expanduser("~/.kaggle/kaggle.json")
+        kaggle_json = os.path.expanduser("./kaggle.json")
 
-        dataset_dir = download_kaggle_dataset(dataset_slug, kaggle_json_file=kaggle_json_path, output_dir=".")
+        dataset_dir = download_kaggle_dataset(dataset_slug, kaggle_json_file=kaggle_json, output_dir=".")
         if dataset_dir:
-            print(f" Dataset downloaded to: {dataset_dir}")
+            print(f" Dataset downloaded successfully")
         else:
             print(" Failed to download dataset. Exiting.")
             sys.exit(1)
 
-        # Try to locate the SQLite file in the extracted folder
+        # locate the SQLite file in the extracted folder
         possible_files = [f for f in os.listdir(dataset_dir) if f.endswith(".sqlite")]
         if not possible_files:
-            print(" No SQLite file found in downloaded dataset.")
             sys.exit(1)
         args.input = os.path.join(dataset_dir, possible_files[0])
-        print(f"Using downloaded SQLite file: {args.input}")
 
-    # Step 1: Connect to database
-    print("\n Step 1: Connecting to PostgreSQL database...")
-    conn = create_database_connection(args.host, args.user, args.password, args.dbname)
     # Step 1: Create database if it doesn't exist
     print("\n Step 1: Creating database if it doesn't exist...")
     if not create_database_if_not_exists(args.host, args.port, args.user, args.password, args.dbname):
@@ -560,12 +636,19 @@ def main():
     
     try:
         # Step 3: Create/verify table
-        print("\n Step 3: Creating/verifying comments table...")
-        create_comments_table(conn)
+        print("\n Step 3: Creating/Verifying all tables...")
+        execute_schema(conn)
         
-        # Step 4: Load data
+        # Step 4: Load data from SQLite
         print("\n Step 4: Loading data from file...")
-        load_comments(conn, args.input, args.sample)
+        comments_data = read_sqlite_data(args.input, args.sample)
+        if not comments_data:
+            print("No data loaded from SQLite file. Exiting.")
+            sys.exit(1)
+        
+        # Step 5: Separate and load data into normalized tables
+        print("\n Step 5: Separating and loading data into normalized tables...")
+        separate_and_load_data(conn, comments_data)
         
         print("\n All steps completed successfully!")
         
