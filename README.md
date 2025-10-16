@@ -14,7 +14,7 @@ Automated Python script to load the Kaggle dataset "Reddit Comments May 2015" fr
 ## Installation
 
 ```bash
-pip install psycopg2-binary
+pip install psycopg2-binary kaggle
 ```
 
 ## Configuration
