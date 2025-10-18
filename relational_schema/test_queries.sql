@@ -7,7 +7,6 @@ SELECT COUNT(*) AS moderation_count FROM Moderation;
 
 
 --FK Validation
-
 SELECT COUNT(*) AS missing_user_refs
 FROM Post p
 LEFT JOIN Users u ON p.author = u.author
