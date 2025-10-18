@@ -1,7 +1,14 @@
+DROP TABLE IF EXISTS Users CASCADE;
+DROP TABLE IF EXISTS Subreddit CASCADE;
+DROP TABLE IF EXISTS Post CASCADE;
+DROP TABLE IF EXISTS Post_Link CASCADE;
+DROP TABLE IF EXISTS Comment CASCADE;
+DROP TABLE IF EXISTS Moderation CASCADE;
+
 -- =========================
 -- Reddit_Users
 -- =========================
-CREATE TABLE IF NOT EXISTS Reddit_Users(
+CREATE TABLE Users (
     author TEXT PRIMARY KEY,
     author_flair_text TEXT,
     author_flair_css_class TEXT
@@ -10,69 +17,69 @@ CREATE TABLE IF NOT EXISTS Reddit_Users(
 -- =========================
 -- Subreddit
 -- =========================
-CREATE TABLE IF NOT EXISTS Subreddit(
+CREATE TABLE Subreddit(
     subreddit_id TEXT PRIMARY KEY,
     subreddit TEXT
 );
 
+
+
 -- =========================
 -- Post
 -- =========================
-CREATE TABLE IF NOT EXISTS Post(
-    post_id TEXT PRIMARY KEY,
+CREATE TABLE Post (
+    link_id TEXT PRIMARY KEY,
     subreddit_id TEXT NOT NULL,
     author TEXT,
-    created_utc INTEGER,              -- epoch time (seconds)
-    archived INTEGER CHECK (archived IN (0,1)),  -- boolean flag
+    created_utc INTEGER,
+    archived INTEGER,
     gilded INTEGER DEFAULT 0,
-    edited INTEGER CHECK (edited IN (0,1)) DEFAULT 0,
+    edited BIGINT,
     FOREIGN KEY (subreddit_id) REFERENCES Subreddit(subreddit_id),
-    FOREIGN KEY (author) REFERENCES Reddit_Users(author) ON DELETE SET NULL
+    FOREIGN KEY (author) REFERENCES Users(author) ON DELETE SET NULL
 );
 
 -- =========================
 -- Post_Link
 -- =========================
-CREATE TABLE IF NOT EXISTS Post_Link(
+CREATE TABLE Post_Link(
     link_id TEXT PRIMARY KEY,
-    post_id TEXT NOT NULL,
-    retrieved_on INTEGER,             -- epoch time
-    FOREIGN KEY (post_id) REFERENCES Post(post_id)
+    post_id TEXT NOT NULL REFERENCES Post(link_id),
+    retrieved_on BIGINT
 );
 
 -- =========================
 -- Comment
 -- =========================
-CREATE TABLE IF NOT EXISTS Comment(
+CREATE TABLE Comment(
     id TEXT PRIMARY KEY,
     body TEXT,
     author TEXT,
-    link_id TEXT NOT NULL,            -- points to Post_Link
-    parent_id TEXT,
-    created_utc INTEGER,              -- epoch time
-    retrieved_on INTEGER,             -- epoch time
+    link_id TEXT NOT NULL REFERENCES Post(link_id),  -- FIXED: References Post, not Post_Link
+    parent_id TEXT,  -- REMOVED foreign key constraint
+    created_utc BIGINT,
+    retrieved_on BIGINT,
     score INTEGER,
     ups INTEGER,
     downs INTEGER,
-    score_hidden INTEGER CHECK (score_hidden IN (0,1)),  -- boolean flag
+    score_hidden INTEGER,
     gilded INTEGER DEFAULT 0,
-    controversiality INTEGER CHECK (controversiality IN (0,1)),
-    edited INTEGER CHECK (edited IN (0,1)) DEFAULT 0,
-    FOREIGN KEY (author) REFERENCES Reddit_Users(author) ON DELETE SET NULL,
-    FOREIGN KEY (link_id) REFERENCES Post_Link(link_id),
-    FOREIGN KEY (parent_id) REFERENCES Comment(id) ON DELETE SET NULL
-); 
+    controversiality INTEGER,
+    edited BIGINT,
+    FOREIGN KEY (author) REFERENCES Users(author) ON DELETE SET NULL
+    -- REMOVED: FOREIGN KEY (parent_id) REFERENCES Comment(id)
+);
 
 -- =========================
 -- Moderation
 -- =========================
-CREATE TABLE IF NOT EXISTS Moderation(
+CREATE TABLE Moderation (
     mod_action_id SERIAL PRIMARY KEY,
     target_type TEXT CHECK (target_type IN ('post','comment')),
-    target_id TEXT NOT NULL,          -- post_id or comment_id
+    target_id TEXT NOT NULL,
     subreddit_id TEXT NOT NULL,
     removal_reason TEXT,
     distinguished TEXT,
-    action_timestamp INTEGER DEFAULT EXTRACT(EPOCH FROM NOW()), 
+    action_timestamp BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()),
     FOREIGN KEY (subreddit_id) REFERENCES Subreddit(subreddit_id)
 );
