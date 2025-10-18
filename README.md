@@ -66,7 +66,33 @@ python load_data.py --input database.sqlite --host localhost --port 5432 --user 
 
 # Load sample for testing
 python load_data.py --input database.sqlite --host localhost --port 5432 --user postgres --password mypass --dbname redditdb --sample 1000
+
+# Use existing SQLite file
+python load_data.py --input database.sqlite --password yourpass --dbname redditdb
+
+# Custom PostgreSQL configuration
+python load_data.py --host 192.168.1.100 --port 5433 --user myuser --password yourpass --dbname redditdb
 ```
+
+### TROUBLESHOOTING
+
+• "Connection refused" error: Ensure PostgreSQL is running
+• "Missing kaggle.json": Download API token from Kaggle account
+• "Permission denied": Check PostgreSQL user privileges
+• "Disk space full": Dataset requires ~50GB during processing
+• "Memory error": Use --sample parameter for testing
+• Download timeout: Ensure stable internet for compressed 20GB download
+
+### AUTOMATIC STEPS:
+
+1. Connects to PostgreSQL database using provided credentials
+2. Reads data from SQLite database using pandas for efficient processing
+3. Separates data into normalized tables (User, Subreddit, Post, Post_Link, Comment, Moderation)
+4. Applies table-specific preprocessing and data cleaning
+5. Loads data in batches of 10,000 records for optimal performance
+6. Provides progress updates every 100,000 records
+7. Handles errors gracefully and continues processing
+8. Reports final statistics for each table
 
 ## Command Line Options
 

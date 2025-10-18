@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
-Reddit May 2015 Dataset Loader (Multi-table Version, Schema-aligned)
+Reddit May 2015 Dataset Loader
+
+Group Members:
+• Hrithik Gaikwad - hg3916
+• Jie Zhang - jz7563
+• Siddharth Bhople - sb8336 
 
 This program automatically loads the Kaggle dataset "Reddit Comments May 2015" from SQLite into PostgreSQL
 using a normalized multi-table approach. The program handles all steps including database connection,
@@ -11,8 +16,7 @@ Dataset: https://www.kaggle.com/datasets/kaggle/reddit-comments-may-2015
 REQUIREMENTS:
 - Python 3.6 or higher
 - PostgreSQL server running and accessible
-- psycopg2-binary package installed (pip install psycopg2-binary)
-- pandas package installed (pip install pandas)
+- Install all dependencies using : pip install -r requirements.txt
 - SQLite database file containing Reddit comments data
 
 CONFIGURATION:
@@ -28,33 +32,21 @@ USAGE:
     # Test with sample data (first 1000 rows)
     python load_data.py --input database.sqlite --host localhost --port 5432 --user postgres --password mypass --dbname redditdb --sample 1000
 
-AUTOMATIC STEPS:
-1. Connects to PostgreSQL database using provided credentials
-2. Reads data from SQLite database using pandas for efficient processing
-3. Separates data into normalized tables (User, Subreddit, Post, Post_Link, Comment, Moderation)
-4. Applies table-specific preprocessing and data cleaning
-5. Loads data in batches of 10,000 records for optimal performance
-6. Provides progress updates every 100,000 records
-7. Handles errors gracefully and continues processing
-8. Reports final statistics for each table
-
 OUTPUT:
-- Progress messages during loading for each table
+- Progress messages during loading for each table and during dataset download
 - Final count of processed and inserted records per table
 - Success confirmation when complete
+- Transaction rollback if any issue encountered during record push
+- Verify data integrity by executing queries from relational_schema/test_queries.sql
 
-SCHEMA COMPATIBILITY:
-- Post.link_id is the primary key
-- edited fields are BIGINT (timestamps)
-- Moderation includes distinguished and removal_reason
-- Proper foreign key relationships maintained
 """
 
+import os
 import argparse
-import pandas as pd
 import sqlite3
-import psycopg2
 import sys
+import zipfile
+import json
 
 # Check for required dependencies
 try:
@@ -65,10 +57,22 @@ except ImportError:
 
 try:
     import psycopg2
+    from psycopg2 import sql
 except ImportError:
     print("Error: psycopg2 is required. Install with: pip install psycopg2-binary")
     sys.exit(1)
 
+try:
+    from tqdm import tqdm
+except ImportError:
+    print("Error: tqdm is required. Install with: pip install tqdm")
+    sys.exit(1)
+    
+try:
+    import requests
+except ImportError:
+    print("Error: requests is required. Install with: pip install requests")
+    sys.exit(1)
 
 def parse_arguments():
     """
@@ -134,6 +138,109 @@ def create_database_connection(host, port, user, password, dbname):
         print("Please check your PostgreSQL server is running and connection details are correct.")
         sys.exit(1)
 
+# ----------------------------- #
+# Download Dataset from Kaggle
+# ----------------------------- #
+def download_kaggle_dataset(output_dir="."):
+    """
+    Direct Kaggle dataset download with progress bar (manual 31.81 GB total).
+    Works on Python 3.13 without using kaggle CLI.
+    """
+    dataset_name="kaggle/reddit-comments-may-2015"
+    try:
+        print(f"\nStep: Setting up Kaggle API for dataset '{dataset_name}'")
+
+        creds_path = "./kaggle.json"
+        if not os.path.exists(creds_path):
+            print("Missing kaggle.json in project folder.")
+            return None
+
+        with open(creds_path, "r") as f:
+            creds = json.load(f)
+        username, key = creds["username"], creds["key"]
+
+        dataset_url = f"https://www.kaggle.com/api/v1/datasets/download/{dataset_name}"
+        os.makedirs(output_dir, exist_ok=True)
+        zip_path = os.path.join(output_dir, "dataset.zip")
+        headers = {"User-Agent": "kaggle/1.5.0 (Python requests)"}
+        auth = (username, key)
+
+        print(f"Dataset URL: {dataset_url}")
+        print("\nStarting download...\n")
+
+        known_total = int(20 * 1024**3)
+        block = 1024 * 1024
+        r = requests.get(dataset_url, stream=True, auth=auth, headers=headers)
+        r.raise_for_status()
+
+        with open(zip_path, "wb") as f, tqdm(
+            total=known_total,unit="B",unit_scale=True,unit_divisor=1024,
+            desc="Downloading (20GB zip)",ncols=80,ascii=True,colour="cyan",
+            bar_format="{desc}: {percentage:3.0f}%|{bar:25}| "
+            "{n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",) as bar:
+            bytes_downloaded = 0
+            for chunk in r.iter_content(chunk_size=block):
+                if chunk:
+                    f.write(chunk)
+                    bytes_downloaded += len(chunk)
+                    bar.update(len(chunk))
+
+        r.close()
+        print(f"\nDownload complete: {bytes_downloaded / 1024**3:.2f} GB written")
+
+        if zipfile.is_zipfile(zip_path):
+            print("Extracting dataset...")
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                zf.extractall(output_dir)
+            print(f"Dataset extracted to {output_dir}")
+        else:
+            print("File is not a zip, skipping extraction.")
+
+        return output_dir
+
+    except Exception as e:
+        print(f"Download failed: {e}")
+        return None
+    
+# ----------------------------- #
+# Database Existence Confirmation
+# ----------------------------- #
+def ensure_database_exists(host, port, user, password, dbname):
+    """Create the target PostgreSQL database if it doesn't exist."""
+    try:
+        conn = psycopg2.connect(host=host, port=port, user=user, password=password, dbname="postgres")
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", [dbname])
+        if not cur.fetchone():
+            print(f"Creating database '{dbname}' ...")
+            cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(dbname)))
+            print(f"✓ Database '{dbname}' created successfully.")
+        else:
+            print(f"✓ Database '{dbname}' already exists.")
+        cur.close()
+        conn.close()
+    except psycopg2.Error as e:
+        print(f"✗ Error ensuring database exists: {e}")
+        sys.exit(1)
+
+# ----------------------------- #
+# Execute Schema File
+# ----------------------------- #
+def execute_schema(conn, schema_file="./relational_schema/create_ddl_queries.sql"):
+    """Run schema DDL file to create tables automatically if missing."""
+    print(f"\nStep: Executing schema file '{schema_file}'...")
+    try:
+        with open(schema_file, "r") as f:
+            sql_script = f.read()
+        cur = conn.cursor()
+        cur.execute(sql_script)
+        conn.commit()
+        print("Schema executed successfully.")
+    except Exception as e:
+        conn.rollback()
+        print(f"Schema execution failed: {e}")
+        sys.exit(1)
 
 def load_data(conn, sqlite_path, sqlite_table, pg_table, select_cols, insert_cols, sample_size=None):
     """
@@ -210,7 +317,7 @@ def load_data(conn, sqlite_path, sqlite_table, pg_table, select_cols, insert_col
         # Skip empty dataframes
         # -----------------------------
         if df.empty:
-            print(f"⚠️ No data found for {pg_table}, skipping...")
+            print(f"No data found for {pg_table}, skipping...")
             return
 
         # Align column order to match PostgreSQL table schema
@@ -239,15 +346,15 @@ def load_data(conn, sqlite_path, sqlite_table, pg_table, select_cols, insert_col
 
                 # Progress reporting every 100,000 rows
                 if total_inserted % 100000 == 0 or total_inserted == len(df):
-                    print(f"   📈 Progress: {total_inserted:,}/{len(df):,} rows inserted into {pg_table}")
+                    print(f"   Progress: {total_inserted:,}/{len(df):,} rows inserted into {pg_table}")
             except Exception as e:
                 conn.rollback()
-                print(f"⚠️ Batch rollback due to error: {e}")
+                print(f"Batch rollback due to error: {e}")
 
-        print(f"✅ Finished loading '{pg_table}' ({total_inserted:,} rows).")
+        print(f"Finished loading '{pg_table}' ({total_inserted:,} rows).")
 
     except Exception as e:
-        print(f"❌ Error loading table '{pg_table}': {e}")
+        print(f"Error loading table '{pg_table}': {e}")
 
 
 def main():
@@ -265,6 +372,22 @@ def main():
     print("🔴 Reddit May 2015 Multi-Table Data Loader (Schema-aligned)")
     print("=" * 65)
     
+    print("\nChecking for dataset / initiating Kaggle download...")
+    ensure_database_exists(args.host, args.port, args.user, args.password, args.dbname)
+
+    # If local file exists, use it
+    if args.input and os.path.exists(args.input):
+        print(f"Found local SQLite file at {args.input}, skipping Kaggle download.")
+        sqlite_path = args.input
+    else:
+        print("Local file not found, trying Kaggle download...")
+        downloaded = download_kaggle_dataset(".")
+        sqlite_path = os.path.join(downloaded, "database.sqlite") if downloaded else None
+
+    if not os.path.exists(sqlite_path):
+        sys.exit(f"SQLite file not found at {sqlite_path}. Exiting.")
+
+
     # Connect to PostgreSQL database
     print("\n🔌 Connecting to PostgreSQL database...")
     conn = create_database_connection(args.host, args.port, args.user, args.password, args.dbname)
@@ -315,13 +438,13 @@ def main():
     load_order = ["users", "subreddit", "post", "post_link", "comment", "moderation"]
 
     try:
-        print(f"\n📥 Loading data from: {args.input}")
+        print(f"\Loading data from: {args.input}")
         if args.sample:
-            print(f"🧪 Sample mode: Loading only {args.sample:,} rows per table")
+            print(f"Sample mode: Loading only {args.sample:,} rows per table")
         
         # Load each table in dependency order
         for i, pg_table in enumerate(load_order, 1):
-            print(f"\n📋 Step {i}: Loading {pg_table.upper()} table...")
+            print(f"\nStep {i}: Loading {pg_table.upper()} table...")
             info = TABLES[pg_table]
 
             load_data(
@@ -334,17 +457,17 @@ def main():
                 sample_size=args.sample
             )
 
-        print("\n🎉 All tables loaded successfully!")
+        print("\All tables loaded successfully!")
 
     except KeyboardInterrupt:
-        print("\n⚠️ Loading interrupted by user.")
+        print("\nLoading interrupted by user.")
         print("Partial data may have been loaded.")
     except Exception as e:
-        print(f"\n❌ Unexpected error: {e}")
+        print(f"\nUnexpected error: {e}")
         print("Please check your input file and database connection.")
     finally:
         conn.close()
-        print("\n🔌 Database connection closed.")
+        print("\nDatabase connection closed.")
         print("=" * 65)
 
 
