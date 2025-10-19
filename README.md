@@ -45,20 +45,7 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Single Table Loader (`load_reddit_may2015.py`)
-
-```bash
-# Load full dataset from SQLite (with port specified)
-python load_reddit_may2015.py --input database.sqlite --host localhost --port 5432 --user postgres --password mypass --dbname redditdb
-
-# Load sample for testing
-python load_reddit_may2015.py --input database.sqlite --host localhost --port 5432 --user postgres --password mypass --dbname redditdb --sample 1000
-
-# Using default port (5432)
-python load_reddit_may2015.py --input database.sqlite --host localhost --user postgres --password mypass --dbname redditdb
-```
-
-### Multi-Table Loader (`load_data.py`)
+### Data Loader (`load_data.py`)
 
 ```bash
 # Load full dataset into normalized tables

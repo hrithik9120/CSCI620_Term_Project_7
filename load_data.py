@@ -144,7 +144,6 @@ def create_database_connection(host, port, user, password, dbname):
 def download_kaggle_dataset(output_dir="."):
     """
     Direct Kaggle dataset download with progress bar (manual 31.81 GB total).
-    Works on Python 3.13 without using kaggle CLI.
     """
     dataset_name="kaggle/reddit-comments-may-2015"
     try:
@@ -261,7 +260,7 @@ def load_data(conn, sqlite_path, sqlite_table, pg_table, select_cols, insert_col
         insert_cols (list): Columns to insert into PostgreSQL
         sample_size (int, optional): Limit to first N rows for testing
     """
-    print(f"📊 Loading data for table: {pg_table}")
+    print(f"Loading data for table: {pg_table}")
     try:
         # Connect to SQLite and read data using pandas
         sqlite_conn = sqlite3.connect(sqlite_path)
