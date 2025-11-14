@@ -12,7 +12,7 @@
 ### Table: `May2015`
 
 **Columns**: created_utc, ups, subreddit_id, link_id, name, score_hidden, author_flair_css_class, author_flair_text, subreddit, id, removal_reason, gilded, downs, archived, author, score, retrieved_on, body, distinguished, edited, controversiality, parent_id
-**Row Count**: 5,000
+**Row Count**: 1,000,000
 
 #### Functional Dependencies
 
@@ -47,10 +47,10 @@
   - Type: Domain-Based
   - Confidence: High
   - Description: Post link ID determines author
-  - Violations: 491 violations in 3102 groups
+  - Violations: 76645 violations in 131330 groups
   - Example violations:
-    - link_id=t3_2ypcks -> author=['MasterT231', 'Commando320']
-    - link_id=t3_30zzvs -> author=['Shadow-Pie', 'ChibibuddyDE']
+    - link_id=t3_2l39lm -> author=['SithKnightWhoSaysNi', 'rugbyslut2']
+    - link_id=t3_2l76uf -> author=['[deleted]', 'TrollaBot']
 
 - `id` → `author` **✅ HOLDS**
   - Type: Domain-Based
@@ -61,28 +61,28 @@
   - Type: Domain-Based
   - Confidence: High
   - Description: Author determines flair text (may fail - authors can have different flairs per subreddit)
-  - Violations: 14 violations in 4099 groups
+  - Violations: 14809 violations in 322216 groups
   - Example violations:
-    - author=AutoModerator -> author_flair_text=['Robot', 'AutoBot', '／人◕ ‿‿ ◕人＼']
-    - author=Dylan0812 -> author_flair_text=["What's the craic big lad?", 'Northern Ireland']
+    - author=-Ahab- -> author_flair_text=['Jeor Mormont', '']
+    - author=-Aslan- -> author_flair_text=['', 'Bears']
 
 - `author` → `author_flair_css_class` **❌ FAILS**
   - Type: Domain-Based
   - Confidence: High
   - Description: Author determines flair CSS class (may fail - authors can have different flairs per subreddit)
-  - Violations: 16 violations in 4099 groups
+  - Violations: 15362 violations in 322216 groups
   - Example violations:
-    - author=AutoModerator -> author_flair_css_class=['robot', 'DinklebotGif', 'nazi']
-    - author=Dylan0812 -> author_flair_css_class=['30', '253']
+    - author=-Ahab- -> author_flair_css_class=['193', 'alt1']
+    - author=-Aslan- -> author_flair_css_class=['staley', 'bears']
 
 - `link_id` → `created_utc` **❌ FAILS**
   - Type: Domain-Based
   - Confidence: High
   - Description: Post link ID determines creation timestamp
-  - Violations: 594 violations in 3102 groups
+  - Violations: 78849 violations in 131330 groups
   - Example violations:
-    - link_id=t3_2q43do -> created_utc=[1430438409, 1430438417, 1430438433]
-    - link_id=t3_2ypcks -> created_utc=[1430438440, 1430438538]
+    - link_id=t3_2l39lm -> created_utc=[1430459257, 1430469063]
+    - link_id=t3_2l45qk -> created_utc=[1430450736, 1430451405]
 
 - `id` → `link_id` **✅ HOLDS**
   - Type: Domain-Based
