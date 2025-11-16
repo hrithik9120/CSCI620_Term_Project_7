@@ -11,7 +11,7 @@ Features
 - Idempotent (upserts & safe indexes)
 
 Usage:
-  python load_to_mongo.py --input ../data/database.sqlite --mongo_uri "mongodb://localhost:27017/" --dbname reddit_may2015 --reset --chunksize 50000 --embed-cap 200
+  python load_to_mongo.py --input ../../data/database.sqlite --mongo_uri "mongodb://localhost:27017/" --dbname reddit_may2015 --reset --chunksize 50000 --embed-cap 200
 """
 
 import argparse
@@ -51,7 +51,7 @@ def extract_zip_fast(zip_path, output_dir):
     print(f" Found SQLite file: {sqlite_path}")
     return sqlite_path
 
-def download_kaggle_dataset(output_dir="../data"):
+def download_kaggle_dataset(output_dir="../../data"):
     """
     Re-use existing files if possible:
       1) If a .sqlite exists anywhere under output_dir, return it.
@@ -78,7 +78,7 @@ def download_kaggle_dataset(output_dir="../data"):
 
     # Download
     dataset_name = "kaggle/reddit-comments-may-2015"
-    creds_path = "../kaggle.json"
+    creds_path = "../../kaggle.json"
     if not os.path.exists(creds_path):
         print(f" Missing kaggle.json at {creds_path}.")
         return None
@@ -317,7 +317,7 @@ def load_chunk_to_mongo(df, db, embed_cap=200):
 # -----------------------------
 def parse_args():
     p = argparse.ArgumentParser(description="Load Reddit May 2015 into MongoDB (hybrid document model)")
-    p.add_argument("--input", required=True, help="Path to SQLite file (database.sqlite). If missing, downloader tries ../data/")
+    p.add_argument("--input", required=True, help="Path to SQLite file (database.sqlite). If missing, downloader tries ../../data/")
     p.add_argument("--mongo_uri", required=True, help="MongoDB URI (e.g. mongodb://localhost:27017/ )")
     p.add_argument("--dbname", required=True, help="MongoDB database name")
     p.add_argument("--chunksize", type=int, default=50000, help="SQLite chunk size (default: 50000)")
@@ -340,7 +340,7 @@ def main():
     sqlite_path = args.input
     if not os.path.exists(sqlite_path):
         print(f" SQLite file not found at {sqlite_path}")
-        sqlite_path = download_kaggle_dataset("../data")
+        sqlite_path = download_kaggle_dataset("../../data")
         if not sqlite_path:
             print(" Could not obtain dataset. Exiting.")
             return

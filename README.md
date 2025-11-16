@@ -1,143 +1,136 @@
-# Reddit Comments May 2015 Dataset Loader
+# CSCI-620 – Phase 2: Document Model (MongoDB)
+## Reddit Comments May 2015 – Document-Oriented Data Model + Loader + Queries
 
-Automated Python scripts to load the Kaggle dataset "Reddit Comments May 2015" from SQLite into PostgreSQL. The programs handle all setup steps automatically without manual intervention.
+This repository contains the complete implementation for Phase 2 of the course project:
+a MongoDB document-oriented model, data loader, functional dependency analysis, and verification queries for the Reddit May 2015 dataset.
 
-**Dataset**: https://www.kaggle.com/datasets/kaggle/reddit-comments-may-2015
+The work builds on Phase 1 (relational schema) and re-models the dataset into a hybrid, high-performance MongoDB architecture.
 
-## Available Scripts
+This repository contains the full implementation for **Phase 2**, including:
+- A complete **MongoDB document model**
+- A scalable **SQLite → MongoDB loader**
+- **Functional dependency discovery**
+- **Phase 2 validation + analytical queries**
+- All reports, diagrams, and final submission package
 
-### 1. `load_reddit_may2015.py` - Single Table Loader
-- Loads data into a single `comments` table
-- Includes automatic Kaggle dataset download
-- Handles JSON/JSON.gz and SQLite input formats
-- Automatic database and table creation
+This phase extends the relational design from **Phase 1** into a high-performance **hybrid document model** built for MongoDB.
 
-### 2. `load_data.py` - Multi-Table Normalized Loader
-- Loads data into normalized tables (User, Subreddit, Post, Post_Link, Comment, Moderation)
-- Uses pandas for efficient data processing
-- Schema-aligned with proper foreign key relationships
-- Optimized batch processing
+```
+data/
+├── reddit-comments-may-2015/
+|   └── database.sqlite      
+|       
+phase1_relational/
+├── code/
+├── ddl/
+├── diagrams/
+├── docs/
+└── README_phase1.md
 
-## Requirements
+phase2_document_model/
+├── code/
+│   ├── discover_functional_dependencies.py
+│   ├── load_to_mongo.py
+│   ├── phase2_queries.py
+│   └── sample_queries.js
+│
+├── diagrams/
+│   └── doc_model_visual.png
+│
+├── docs/
+│   ├── document_model_report.md
+│   ├── functional_dependencies_report.md
+│   └── README_Queries.md
+|
+|submission/
 
-- Python 3.6+
-- PostgreSQL server running and accessible
-- SQLite database file containing Reddit comments data
+.gitignore
+kaggle.json
+README.md
+requirements.txt
+```
 
-## Installation
+## MongoDB Document Model
 
+**Files:**
+- `phase2_document_model/docs/document_model_report.md`  
+- `phase2_document_model/diagrams/doc_model_visual.png`
+
+**Collections implemented:**
+- `users`
+- `subreddits`
+- `posts` *(hybrid: partial embedding + referencing)*
+- `comments`
+- `moderation`
+
+The model balances **post-centric reads**, **analytics**, and **MongoDB document size limits**.
+
+---
+
+## MongoDB Loader 
+
+**File:**
+- `phase2_document_model/code/load_to_mongo.py`
+
+**Features:**
+- Streaming SQLite ingestion (`chunksize=50000`)
+- Idempotent upserts for deduplication
+- Embeds top-N comments directly inside posts
+- Bulk writes for maximum throughput
+- Automatic index creation
+- Reuses existing `.sqlite` or pulls dataset from Kaggle
+
+**Run example:**
 ```bash
+python load_to_mongo.py \
+    --input ../data/database.sqlite \
+    --mongo_uri "mongodb://localhost:27017/" \
+    --dbname reddit_may2015 \
+    --chunksize 50000 \
+    --embed-cap 200 \
+    --reset
+```
+
+## Setup
+### 1. Install Dependencies
+```
 pip install -r requirements.txt
 ```
-
-### Dependencies
-- `psycopg2-binary`: PostgreSQL database adapter
-- `pandas`: Data manipulation and analysis
-- `requests`: HTTP library for Kaggle API
-- `tqdm`: Progress bars for downloads
-
-## Configuration
-
-1. Ensure PostgreSQL server is running on your system
-2. Note your PostgreSQL connection details (host, username, password)
-3. The programs will automatically create the database if it doesn't exist
-4. For multi-table loader: Ensure PostgreSQL schema is created (run `create_ddl_queries.sql` first)
-
-## Usage
-
-### Data Loader (`load_data.py`)
-
-```bash
-# Load full dataset into normalized tables
-python load_data.py --input database.sqlite --host localhost --port 5432 --user postgres --password mypass --dbname redditdb
-
-# Load sample for testing
-python load_data.py --input database.sqlite --host localhost --port 5432 --user postgres --password mypass --dbname redditdb --sample 1000
-
-# Use existing SQLite file
-python load_data.py --input database.sqlite --password yourpass --dbname redditdb
-
-# Custom PostgreSQL configuration
-python load_data.py --host 192.168.1.100 --port 5433 --user myuser --password yourpass --dbname redditdb
+### 2. Ensure MongoDB is running
+Default expected:
+```
+mongodb://localhost:27017/
+```
+### 3. Confirm dataset location
+Default expected:
+```
+data/reddit-comments-may-2015/database.sqlite
 ```
 
-### TROUBLESHOOTING
+## Running the MongoDB Loader
+```
+python phase2_document_model/code/load_to_mongo.py \
+    --input data/reddit-comments-may-2015/database.sqlite \
+    --mongo_uri "mongodb://localhost:27017/" \
+    --dbname reddit_may2015 \
+    --chunksize 50000 \
+    --embed-cap 200 \
+    --reset
+```
 
-• "Connection refused" error: Ensure PostgreSQL is running
-• "Missing kaggle.json": Download API token from Kaggle account
-• "Permission denied": Check PostgreSQL user privileges
-• "Disk space full": Dataset requires ~50GB during processing
-• "Memory error": Use --sample parameter for testing
-• Download timeout: Ensure stable internet for compressed 20GB download
 
-### AUTOMATIC STEPS:
+## Running Queries
+### Phase 2 Python Query Suite
+```
+python phase2_document_model/code/phase2_queries.py
+```
+JavaScript Queries (Mongo Shell)
 
-1. Connects to PostgreSQL database using provided credentials
-2. Reads data from SQLite database using pandas for efficient processing
-3. Separates data into normalized tables (User, Subreddit, Post, Post_Link, Comment, Moderation)
-4. Applies table-specific preprocessing and data cleaning
-5. Loads data in batches of 10,000 records for optimal performance
-6. Provides progress updates every 100,000 records
-7. Handles errors gracefully and continues processing
-8. Reports final statistics for each table
+```
+mongosh phase2_document_model/code/sample_queries.js
+```
+Functional Dependency Analysis
+```
+python phase2_document_model/code/discover_functional_dependencies.py --input data/ reddit-comments-may-2015/database.sqlite
+```
 
-## Command Line Options
-
-Both scripts support the same command line options:
-
-- `--input`: Path to SQLite database file (required)
-- `--host`: PostgreSQL server host (default: localhost)
-- `--port`: PostgreSQL server port (default: 5432)
-- `--user`: PostgreSQL username (default: postgres)
-- `--password`: PostgreSQL password (required)
-- `--dbname`: PostgreSQL database name (required)
-- `--sample`: Load only first N rows for testing (optional)
-
-## Automatic Steps
-
-Both programs handle all steps automatically without manual intervention:
-
-### Single Table Loader (`load_reddit_may2015.py`)
-1. **Database Creation**: Creates target database if it doesn't exist
-2. **Connection**: Connects to PostgreSQL database
-3. **Table Setup**: Creates 'comments' table with proper schema
-4. **Data Reading**: Reads data from SQLite database
-5. **Data Processing**: Extracts and validates required fields
-6. **Batch Loading**: Loads data in batches for optimal performance
-7. **Progress Reporting**: Provides real-time progress updates
-8. **Error Handling**: Gracefully handles errors and continues processing
-9. **Statistics**: Reports comprehensive final statistics
-
-### Multi-Table Loader (`load_data.py`)
-1. **Connection**: Connects to PostgreSQL database
-2. **Data Reading**: Reads data from SQLite using pandas
-3. **Table Processing**: Loads data into normalized tables in dependency order
-4. **Data Cleaning**: Applies table-specific preprocessing
-5. **Batch Loading**: Loads data in batches of 10,000 records
-6. **Progress Reporting**: Provides real-time progress updates
-7. **Error Handling**: Gracefully handles errors and continues processing
-8. **Statistics**: Reports final statistics for each table
-
-## Features
-
-### Common Features
-- **Automatic Database Creation**: Creates PostgreSQL database if it doesn't exist
-- **SQLite to PostgreSQL Conversion**: Automatically converts SQLite data to PostgreSQL format
-- **Port Configuration**: Supports custom PostgreSQL ports
-- **Error Handling**: Graceful error handling for data conversion issues
-- **Sample Mode**: Test with limited data using --sample parameter
-- **Memory Efficient**: Processes data in batches without loading entire dataset into memory
-- **Progress Tracking**: Real-time progress updates and final statistics
-- **No Manual Intervention**: Complete automation from start to finish
-
-### Single Table Loader Specific
-- **Kaggle Download**: Automatic dataset download from Kaggle
-- **Multiple Formats**: Handles JSON/JSON.gz and SQLite input formats
-- **Smart Table Detection**: Automatically finds the appropriate table in SQLite database
-
-### Multi-Table Loader Specific
-- **Normalized Schema**: Loads into 6 normalized tables (User, Subreddit, Post, Post_Link, Comment, Moderation)
-- **Pandas Integration**: Uses pandas for efficient data manipulation
-- **Foreign Key Management**: Maintains proper relationships between tables
-- **Data Cleaning**: Table-specific preprocessing and validation
-- **Schema Alignment**: Compatible with PostgreSQL schema requirements
