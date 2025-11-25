@@ -82,7 +82,7 @@ def insert_posts_and_postlink(mongo_db, pg_conn):
 
     for doc in mongo_db.posts.find({}):
 
-        # ---- 1) 处理 subreddit 信息 ----
+
         subreddit = doc.get("subreddit") or {}
         subreddit_id = subreddit.get("id")
         subreddit_name = subreddit.get("name")
@@ -98,12 +98,12 @@ def insert_posts_and_postlink(mongo_db, pg_conn):
                 (subreddit_id, subreddit_name),
             )
 
-        # ---- 2) 处理 author（把 "[deleted]" 映射成 NULL）----
+
         author = doc.get("author")
         if author == "[deleted]":
             author = None
 
-        # ---- 3) 插入 Post ----
+        # ---- 3) Insert into Post ----
         cur.execute(
             """
             INSERT INTO Post (
@@ -130,7 +130,7 @@ def insert_posts_and_postlink(mongo_db, pg_conn):
             ),
         )
 
-        # ---- 4) 插入 Post_Link（如果有 retrieved_on）----
+        # ---- 4) insert to Post_link (if there is retrieved_on)------
         retrieved_on = doc.get("retrieved_on")
         if retrieved_on is not None:
             cur.execute(
@@ -152,7 +152,7 @@ def insert_comments(mongo_db, pg_conn):
     cur = pg_conn.cursor()
 
     for doc in mongo_db.comments.find({}):
-        # ★ 修改：处理被删除的作者
+
         author = doc.get("author")
         if author == "[deleted]":
             author = None
@@ -234,7 +234,7 @@ def main():
     client = MongoClient(args.mongo_uri)
     db = client[args.mongo_dbname]
 
-    # 注意：执行前要保证关系表已经按照你发的 schema 建好
+    # make sure create relational tables according to schema
     insert_users(db, pg_conn)
     insert_subreddits(db, pg_conn)
     insert_posts_and_postlink(db, pg_conn)
