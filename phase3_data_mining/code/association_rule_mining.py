@@ -36,6 +36,7 @@ ALGORITHM:
 import argparse
 import sqlite3
 import pandas as pd  # type: ignore
+import psycopg2
 from mlxtend.frequent_patterns import apriori, association_rules
 from mlxtend.preprocessing import TransactionEncoder
 import sys
@@ -47,8 +48,20 @@ def parse_arguments():
         description="Association Rule Mining for Reddit Comments dataset",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument('--input', default='database.sqlite',
-                       help='Path to SQLite database file (default: database.sqlite)')
+    # PostgreSQL connection params
+    parser.add_argument('--host', default='localhost',
+                        help='PostgreSQL server host (default: localhost)')
+    parser.add_argument('--port', default='5432',
+                        help='PostgreSQL server port (default: 5432)')
+    parser.add_argument('--user', default='postgres',
+                        help='PostgreSQL username (default: postgres)')
+    parser.add_argument('--password', required=True,
+                        help='PostgreSQL password (required)')
+    parser.add_argument('--dbname', required=True,
+                        help='PostgreSQL database name (required)')
+
+    # parser.add_argument('--input', default='database.sqlite',
+    #                    help='Path to SQLite database file (default: database.sqlite)')
     parser.add_argument('--sample', type=int,
                        help='Analyze only first N rows (for testing)')
     parser.add_argument('--min-support', type=float, default=0.01,
@@ -58,25 +71,76 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def load_data(sqlite_path, sample_size=None):
+# def load_data(sqlite_path, sample_size=None):
+#     """
+#     Load data from SQLite database.
+#
+#     Returns:
+#         DataFrame with Reddit comments data
+#     """
+#     print("[*] Loading data from SQLite database...")
+#     conn = sqlite3.connect(sqlite_path)
+#
+#     query = "SELECT * FROM May2015"
+#     if sample_size:
+#         query += f" LIMIT {sample_size}"
+#
+#     df = pd.read_sql_query(query, conn)
+#     conn.close()
+#
+#     print(f"[OK] Loaded {len(df):,} rows")
+#     return df
+
+# ------------------------- Data Loading ------------------------- #
+
+def load_data_from_postgres(args):
     """
-    Load data from SQLite database.
-    
-    Returns:
-        DataFrame with Reddit comments data
+    Load cleaned data from PostgreSQL.
+
+    We join:
+        comment_cleaned  (score, gilded, controversiality, edited, link_id)
+        post_cleaned     (archived, subreddit_id, link_id)
+        subreddit_cleaned(subreddit, subreddit_id)
+
+    Only columns needed by create_transactions() are selected.
     """
-    print("[*] Loading data from SQLite database...")
-    conn = sqlite3.connect(sqlite_path)
-    
-    query = "SELECT * FROM May2015"
-    if sample_size:
-        query += f" LIMIT {sample_size}"
-    
-    df = pd.read_sql_query(query, conn)
+    print("[*] Loading CLEANED data from PostgreSQL...")
+
+    conn = psycopg2.connect(
+        host=args.host,
+        port=args.port,
+        user=args.user,
+        password=args.password,
+        dbname=args.dbname,
+    )
+
+    base_query = """
+        SELECT
+            s.subreddit,
+            c.score,
+            c.gilded,
+            c.controversiality,
+            c.edited,
+            p.archived,
+            NULL::text AS distinguished   -- keep column for existing code
+        FROM comment_cleaned c
+        JOIN post_cleaned p
+          ON c.link_id = p.link_id
+        JOIN subreddit_cleaned s
+          ON p.subreddit_id = s.subreddit_id
+    """
+
+    params = None
+    if args.sample:
+        base_query += " LIMIT %s"
+        params = (args.sample,)
+
+    df = pd.read_sql(base_query, conn, params=params)
     conn.close()
-    
-    print(f"[OK] Loaded {len(df):,} rows")
+
+    print(f"[OK] Loaded {len(df):,} cleaned rows")
     return df
+
 
 
 
@@ -369,7 +433,7 @@ def main():
     print("="*80)
     
     # Load data
-    df = load_data(args.input, args.sample)
+    df = load_data_from_postgres(args)
     
     # Create transactions from comments
     print("\n[*] Creating transactions...")
